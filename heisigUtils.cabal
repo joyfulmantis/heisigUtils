@@ -1,0 +1,25 @@
+name:                heisigUtils
+version:             0.1.0.0
+synopsis:            A simple prgram which provides search and dependecy listing for characters in Heisig's books
+homepage:            https://github.com/joyfulmantis/heisigUtils
+license:             GPL-2
+license-file:        LICENSE
+author:              Nathan Maxson
+maintainer:          joyfulmantis@gmail.com
+category:            Language
+
+build-type:          Simple
+extra-source-files:  README.md
+cabal-version:       >=1.10
+
+executable heisigUtils
+  main-is:             heisigUtils.hs
+  other-extensions:    DeriveGeneric    
+  build-depends:       base >=4.7 && <4.8, 
+                       bytestring, 
+                       utf8-string, 
+                       cassava, 
+                       split,
+                       optparse-applicative 
+  default-language:    Haskell2010
+  
