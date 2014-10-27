@@ -123,4 +123,3 @@ parseDependencies x =
   case rtDependencies x of
     [] -> []
     y -> filter (\z -> z /= rtKeyword x) $ splitOn ", " y
-
