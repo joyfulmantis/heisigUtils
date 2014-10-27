@@ -37,11 +37,12 @@ instance C.ToNamedRecord Heisig
 
 
 main :: IO ()
-main = do options <- execParser (parserOptions `withInfo` "A simple prgram which provides search and dependecy listing for characters in Heisig's books")
+main = do options <- execParser (parserOptions `withInfo` parserInfo)
           contents <- BL.readFile (_fname options)
           case parseCSV contents of
             Left e -> putStrLn e
             Right r -> putStr $ uncurry (run ( _command options )) r
+  where parserInfo = "A simple program which provides search and dependency listing for characters in Heisig's books"
 
 parserOptions :: Parser Options
 parserOptions = Options <$> parserFile <*> parserCommand
@@ -49,20 +50,24 @@ parserOptions = Options <$> parserFile <*> parserCommand
 parserFile :: Parser File
 parserFile = strOption $
     short 'f' <> long "file" <> metavar "FILE" <>
-    help "The CSV file to use as a databse"
+    help "The CSV file to use as a database"
 
 parserCommand :: Parser Command
 parserCommand = subparser $
-    command "dependencies" (parserDependencies   `withInfo` "Lists all the Heisig dependencies for provided keyword and characters returning a csv of the results")
-    <> command "search"    (parserSearch         `withInfo` "Returns a csv of the all the entries of the provided characters and keywords")
-    <> command "verify"    (parserVerify         `withInfo` "Verifys that there are no missing dependencies in the csv file")
+    command "dependencies" (parserDependencies `withInfo` depInfo)
+  <> command "search"      (parserSearch `withInfo` serInfo)
+  <> command "verify"      (parserVerify `withInfo` verInfo)
+  where depInfo = "Returns a csv of all the Heisig dependencies for the provided characters and keywords"
+        serInfo = "Returns a csv of the all the entries for the provided characters and keywords"
+        verInfo = "Verifys that there are no missing dependencies in the csv file"
 
 parserDependencies :: Parser Command
-parserDependencies = Dependencies
-    <$> argument str (metavar "<Chinese Characters and/or Heisig Keywords>")
+parserDependencies =
+  Dependencies <$> argument str (metavar "<Characters and/or Keywords>")
 
 parserSearch :: Parser Command
-parserSearch = Search <$> argument str (metavar "<Chinese Characters and/or Heisig Keywords>")
+parserSearch =
+  Search <$> argument str (metavar "<Characters and/or Keywords>")
 
 parserVerify :: Parser Command
 parserVerify = pure Verify
@@ -76,39 +81,40 @@ parseCSV contents = do
   return (x, toList y)
 
 run :: Command -> C.Header -> [Heisig] -> String
-run cmmnd header csv = case cmmnd of
-    Dependencies charOrKeyws -> formater header $ dependencies csv (splitOn ", " charOrKeyws)
-    Search charOrKeyws -> formater header $ search csv (splitOn ", " charOrKeyws)
-    Verify -> verify (reverse csv)
+run (Dependencies charOrKeyws) header =
+  formater header . dependencies (splitOn ", " charOrKeyws)
+run (Search charOrKeyws) header =
+  formater header . search (splitOn ", " charOrKeyws)
+run Verify header = verify . reverse
 
 formater :: C.Header -> Either ErrorMsg [Heisig] -> String
-formater header toFormat = case toFormat of
-                             Left e -> e
-                             Right r -> BU.toString (BL.toStrict (C.encodeByName header r))
+formater header (Left e) = e
+formater header (Right r) =
+  BU.toString  $ BL.toStrict $ C.encodeByName header r
 
-dependencies :: [Heisig] -> [String] -> Either String [Heisig]
-dependencies database (dependant:xs) =
-  case findHeisig database dependant of
+dependencies :: [String] -> [Heisig] -> Either String [Heisig]
+dependencies (dependant:xs) database =
+  case findHeisig dependant database of
    Nothing -> Left $ "Can not find " ++ dependant
-   Just x -> (x :) <$> dependencies database (xs ++ parseDependencies x)
-dependencies _ [] = Right []
+   Just x -> (x :) <$> dependencies (xs ++ parseDependencies x) database
+dependencies [] _ = Right []
 
-search :: [Heisig] -> [String] -> Either ErrorMsg [Heisig]
-search database (x:xs) =
-  case findHeisig database x of
+search :: [String] -> [Heisig] -> Either ErrorMsg [Heisig]
+search (x:xs) database =
+  case findHeisig x database of
     Nothing -> Left ("could not find " ++ x )
-    Just z -> (z :) <$> search database xs
-search _ [] = Right []
+    Just z -> (z :) <$> search xs database
+search [] _ = Right []
 
 verify :: [Heisig] -> String
 verify (x:xs) =
-  case dependencies xs (parseDependencies x) of
+  case dependencies (parseDependencies x) xs of
     Left e -> e
     Right _ -> rtID x ++ "...\n" ++ verify xs
 verify [] = "Looks spiffy...\n"
 
-findHeisig :: [Heisig] -> String -> Maybe Heisig
-findHeisig database x = find matcher database
+findHeisig :: String -> [Heisig] -> Maybe Heisig
+findHeisig x = find matcher
   where matcher z = rtCharacter z == x
                     || map toLower (rtKeyword z) == map toLower x
 
