@@ -90,7 +90,7 @@ run Verify header = verify . reverse
 formater :: C.Header -> Either ErrorMsg [Heisig] -> String
 formater header (Left e) = e
 formater header (Right r) =
-  BU.toString  $ BL.toStrict $ C.encodeByName header r
+  BU.toString $ BL.toStrict $ C.encodeByName header r
 
 dependencies :: [String] -> [Heisig] -> Either String [Heisig]
 dependencies (dependant:xs) database =
@@ -102,7 +102,7 @@ dependencies [] _ = Right []
 search :: [String] -> [Heisig] -> Either ErrorMsg [Heisig]
 search (x:xs) database =
   case findHeisig x database of
-    Nothing -> Left ("could not find " ++ x )
+    Nothing -> Left $ "could not find " ++ x
     Just z -> (z :) <$> search xs database
 search [] _ = Right []
 
