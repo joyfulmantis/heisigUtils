@@ -9,17 +9,18 @@ import           Data.Foldable
 import           Data.List.Split            (splitOn)
 import           GHC.Generics
 import           Options.Applicative
+import           System.Exit
+import           System.IO
 
-type ErrorMsg = String
+type Zfunc = [String] -> [Heisig] -> Either String [Heisig]
 
-type File          = FilePath
-type CharsOrKeyws  = String
-data Options       = Options { _fname   :: File
-                             , _command :: Command }
+data Options       = Options { _fname  :: FilePath
+                            , _command :: Command }
 
-data Command = Dependencies CharsOrKeyws
-             | Search CharsOrKeyws
+data Command = Dependencies String
+             | Search String
              | Verify
+             | Interactive
 
 data Heisig = Heisig
   { rtID           :: String
@@ -35,19 +36,20 @@ data Heisig = Heisig
 instance C.FromNamedRecord Heisig
 instance C.ToNamedRecord Heisig
 
-
 main :: IO ()
 main = do options <- execParser (parserOptions `withInfo` parserInfo)
           contents <- BL.readFile (_fname options)
           case parseCSV contents of
             Left e -> putStrLn e
-            Right r -> putStr $ uncurry (run ( _command options )) r
+            Right r -> case _command options of
+                         Interactive -> uncurry interactiveRun r
+                         _ -> putStr $ uncurry (run ( _command options )) r
   where parserInfo = "A simple program which provides search and dependency listing for characters in Heisig's books"
 
 parserOptions :: Parser Options
 parserOptions = Options <$> parserFile <*> parserCommand
 
-parserFile :: Parser File
+parserFile :: Parser FilePath
 parserFile = strOption $
     short 'f' <> long "file" <> metavar "FILE" <>
     help "The CSV file to use as a database"
@@ -56,10 +58,12 @@ parserCommand :: Parser Command
 parserCommand = subparser $
     command "dependencies" (parserDependencies `withInfo` depInfo)
   <> command "search"      (parserSearch `withInfo` serInfo)
-  <> command "verify"      (parserVerify `withInfo` verInfo)
+  <> command "verify"      (pure Verify `withInfo` verInfo)
+  <> command "interactive" (pure Interactive `withInfo` interInfo)
   where depInfo = "Returns a csv of all the Heisig dependencies for the provided characters and keywords"
         serInfo = "Returns a csv of the all the entries for the provided characters and keywords"
         verInfo = "Verifys that there are no missing dependencies in the csv file"
+        interInfo = "Run's heisigUtils interactively"
 
 parserDependencies :: Parser Command
 parserDependencies =
@@ -69,28 +73,54 @@ parserSearch :: Parser Command
 parserSearch =
   Search <$> argument str (metavar "<Characters and/or Keywords>")
 
-parserVerify :: Parser Command
-parserVerify = pure Verify
-
 withInfo :: Parser a -> String -> ParserInfo a
 withInfo opts desc = info (helper <*> opts) $ progDesc desc
 
-parseCSV :: BLC.ByteString -> Either ErrorMsg (C.Header, [Heisig])
+parseCSV :: BLC.ByteString -> Either String (C.Header, [Heisig])
 parseCSV contents = do
   (x, y) <- C.decodeByName contents
   return (x, toList y)
 
 run :: Command -> C.Header -> [Heisig] -> String
-run (Dependencies charOrKeyws) header =
-  formater header . dependencies (splitOn ", " charOrKeyws)
-run (Search charOrKeyws) header =
-  formater header . search (splitOn ", " charOrKeyws)
-run Verify header = verify . reverse
+run (Dependencies charOrKeyws) headr =
+  formater headr . dependencies (splitOn ", " charOrKeyws)
+run (Search charOrKeyws) headr =
+  formater headr . search (splitOn ", " charOrKeyws)
+run Verify _ = verify . reverse
 
-formater :: C.Header -> Either ErrorMsg [Heisig] -> String
-formater header (Left e) = e
-formater header (Right r) =
-  BU.toString $ BL.toStrict $ C.encodeByName header r
+interactiveRun :: C.Header -> [Heisig] -> IO ()
+interactiveRun headr dbase =
+  do putStr "> "
+     hFlush stdout
+     input <- getLine
+     case input of
+       "dependencies" -> interactiveDependencies headr dbase
+       "search" -> interactiveSearch headr dbase
+       "exit" -> exitWith ExitSuccess
+       _ -> putStrLn helpMsg >> interactiveRun headr dbase
+  where helpMsg = "please use one of 'dependencies search exit'"
+
+interactiveZ :: String -> Zfunc -> C.Header -> [Heisig] -> IO ()
+interactiveZ name func headr dbase =
+  do putStr $ name  ++ "> "
+     hFlush stdout
+     input <- getLine
+     case input of
+       "exit" -> interactiveRun headr dbase
+       charOrKeyws ->
+         putStr (formater headr (func (splitOn ", " charOrKeyws) dbase))
+         >> interactiveZ name func headr dbase
+
+interactiveDependencies :: C.Header -> [Heisig] -> IO ()
+interactiveDependencies = interactiveZ "dependencies" dependencies
+
+interactiveSearch :: C.Header -> [Heisig] -> IO ()
+interactiveSearch = interactiveZ "search" search
+
+formater :: C.Header -> Either String [Heisig] -> String
+formater _ (Left e) = e ++ "\n"
+formater headr (Right r) =
+  BU.toString $ BL.toStrict $ C.encodeByName headr r
 
 dependencies :: [String] -> [Heisig] -> Either String [Heisig]
 dependencies (dependant:xs) database =
@@ -99,7 +129,7 @@ dependencies (dependant:xs) database =
    Just x -> (x :) <$> dependencies (xs ++ parseDependencies x) database
 dependencies [] _ = Right []
 
-search :: [String] -> [Heisig] -> Either ErrorMsg [Heisig]
+search :: [String] -> [Heisig] -> Either String [Heisig]
 search (x:xs) database =
   case findHeisig x database of
     Nothing -> Left $ "could not find " ++ x
