@@ -1,5 +1,8 @@
 *~
 *#
+*.hi
+*.o
+heisigUtils
 .cabal-sandbox
 cabal.sandbox.config
 dist
