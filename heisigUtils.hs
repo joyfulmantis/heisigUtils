@@ -12,10 +12,8 @@ import           Options.Applicative
 import           System.Exit
 import           System.IO
 
-type Zfunc = [String] -> [Heisig] -> Either String [Heisig]
-
-data Options       = Options { _fname  :: FilePath
-                            , _command :: Command }
+data Options = Options { _fname   :: FilePath
+                       , _command :: Command }
 
 data Command = Dependencies String
              | Search String
@@ -43,16 +41,15 @@ main = do options <- execParser (parserOptions `withInfo` parserInfo)
             Left e -> putStrLn e
             Right r -> case _command options of
                          Interactive -> uncurry interactiveRun r
-                         _ -> putStr $ uncurry (run ( _command options )) r
+                         z -> putStr $ uncurry (run z) r
   where parserInfo = "A simple program which provides search and dependency listing for characters in Heisig's books"
 
 parserOptions :: Parser Options
 parserOptions = Options <$> parserFile <*> parserCommand
 
 parserFile :: Parser FilePath
-parserFile = strOption $
-    short 'f' <> long "file" <> metavar "FILE" <>
-    help "The CSV file to use as a database"
+parserFile = strOption $ short 'f' <> long "file" <> metavar "FILE"
+             <> help "The CSV file to use as a database"
 
 parserCommand :: Parser Command
 parserCommand = subparser $
@@ -77,64 +74,60 @@ withInfo :: Parser a -> String -> ParserInfo a
 withInfo opts desc = info (helper <*> opts) $ progDesc desc
 
 parseCSV :: BLC.ByteString -> Either String (C.Header, [Heisig])
-parseCSV contents = do
-  (x, y) <- C.decodeByName contents
-  return (x, toList y)
+parseCSV contents =  do (x, y) <- C.decodeByName contents
+                        return (x, toList y)
 
-run :: Command -> C.Header -> [Heisig] -> String
-run (Dependencies charOrKeyws) headr =
-  formater headr . dependencies (splitOn ", " charOrKeyws)
-run (Search charOrKeyws) headr =
-  formater headr . search (splitOn ", " charOrKeyws)
-run Verify _ = verify . reverse
+abstractInteractive :: String -> (String -> IO ()) -> IO ()
+abstractInteractive prompt inputHandler = do putStr prompt
+                                             hFlush stdout
+                                             input <- getLine
+                                             inputHandler input
 
 interactiveRun :: C.Header -> [Heisig] -> IO ()
-interactiveRun headr dbase =
-  do putStr "> "
-     hFlush stdout
-     input <- getLine
-     case input of
-       "dependencies" -> interactiveDependencies headr dbase
-       "search" -> interactiveSearch headr dbase
-       "exit" -> exitWith ExitSuccess
-       _ -> putStrLn helpMsg >> interactiveRun headr dbase
-  where helpMsg = "please use one of 'dependencies search exit'"
-
-interactiveZ :: String -> Zfunc -> C.Header -> [Heisig] -> IO ()
-interactiveZ name func headr dbase =
-  do putStr $ name  ++ "> "
-     hFlush stdout
-     input <- getLine
-     case input of
-       "exit" -> interactiveRun headr dbase
-       charOrKeyws ->
-         putStr (formater headr (func (splitOn ", " charOrKeyws) dbase))
-         >> interactiveZ name func headr dbase
+interactiveRun header database = abstractInteractive "> " handler
+  where handler "dependencies" = interactiveDependencies header database
+        handler "search" = interactiveSearch header database
+        handler "exit" = exitWith ExitSuccess
+        handler _ = putStrLn helpMsg >> interactiveRun header database
+        helpMsg = "please use one of 'dependencies search exit'"
 
 interactiveDependencies :: C.Header -> [Heisig] -> IO ()
-interactiveDependencies = interactiveZ "dependencies" dependencies
+interactiveDependencies header database =
+  abstractInteractive "dependencies> " handler
+  where handler "exit" = interactiveRun header database
+        handler input = do putStr $ run (Dependencies input) header database
+                           interactiveDependencies header database
 
 interactiveSearch :: C.Header -> [Heisig] -> IO ()
-interactiveSearch = interactiveZ "search" search
+interactiveSearch header database = abstractInteractive "search> " handler
+  where handler "exit" = interactiveRun header database
+        handler input = do putStr $ run (Search input) header database
+                           interactiveSearch header database
+
+run :: Command -> C.Header -> [Heisig] -> String
+run (Dependencies query) header =
+  formater header . dependencies (splitOn ", " query)
+run (Search query) header = formater header . search (splitOn ", " query)
+run Verify _ = verify . reverse
 
 formater :: C.Header -> Either String [Heisig] -> String
 formater _ (Left e) = e ++ "\n"
-formater headr (Right r) =
-  BU.toString $ BL.toStrict $ C.encodeByName headr r
+formater header (Right r) =
+  BU.toString $ BL.toStrict $ C.encodeByName header r
 
 dependencies :: [String] -> [Heisig] -> Either String [Heisig]
-dependencies (dependant:xs) database =
-  case findHeisig dependant database of
-   Nothing -> Left $ "Can not find " ++ dependant
-   Just x -> (x :) <$> dependencies (xs ++ parseDependencies x) database
-dependencies [] _ = Right []
+dependencies (d:ds) database =
+  do first <- findHeisig d database
+     theRest <- dependencies (ds ++ parseDependencies first) database
+     pure $ first : theRest
+dependencies [] _ = pure []
 
 search :: [String] -> [Heisig] -> Either String [Heisig]
 search (x:xs) database =
-  case findHeisig x database of
-    Nothing -> Left $ "could not find " ++ x
-    Just z -> (z :) <$> search xs database
-search [] _ = Right []
+  do first <- findHeisig x database
+     theRest <- search xs database
+     pure $ first : theRest
+search [] _ = pure []
 
 verify :: [Heisig] -> String
 verify (x:xs) =
@@ -143,13 +136,14 @@ verify (x:xs) =
     Right _ -> rtID x ++ "...\n" ++ verify xs
 verify [] = "Looks spiffy...\n"
 
-findHeisig :: String -> [Heisig] -> Maybe Heisig
-findHeisig x = find matcher
+findHeisig :: String -> [Heisig] -> Either String Heisig
+findHeisig x database = case find matcher database of
+                          Nothing -> Left $ "Could not find " `T.append` x
+                          Just y -> pure y
   where matcher z = rtCharacter z == x
                     || map toLower (rtKeyword z) == map toLower x
 
 parseDependencies :: Heisig -> [String]
-parseDependencies x =
-  case rtDependencies x of
-    [] -> []
-    y -> filter (\z -> z /= rtKeyword x) $ splitOn ", " y
+parseDependencies Heisig {rtDependencies = []} = []
+parseDependencies x @ Heisig {rtDependencies = y} =
+  filter (\z -> z /= rtKeyword x) $ splitOn ", " y
