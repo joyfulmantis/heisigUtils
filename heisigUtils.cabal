@@ -14,12 +14,12 @@ cabal-version:       >=1.10
 
 executable heisigUtils
   main-is:             heisigUtils.hs
-  other-extensions:    DeriveGeneric    
+  other-extensions:    DeriveGeneric
+                       OverloadedStrings    
   build-depends:       base >=4.7 && <4.8, 
                        bytestring, 
-                       utf8-string, 
                        cassava, 
-                       split,
-                       optparse-applicative 
+                       optparse-applicative,
+                       text 
   default-language:    Haskell2010
   
