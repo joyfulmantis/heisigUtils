@@ -1,3 +1,4 @@
+[![Build Status](https://travis-ci.org/joyfulmantis/heisigUtils.svg?branch=master)](https://travis-ci.org/joyfulmantis/heisigUtils)
 heisigUtils [WIP]
 ===========
 A simple program which provides search and dependency listing for characters in Heisig's books
